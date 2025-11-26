@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pac-Man Arcade</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom Arcade Styling */
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body {
+            font-family: 'Press Start 2P', monospace;
+            background-color: #0d1117; /* Dark background */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            color: #fff;
+            padding: 20px;
+        }
+
+        #gameCanvas {
+            border: 4px solid #4a90e2; /* Blue border */
+            background-color: #000;
+            box-shadow: 0 0 20px rgba(74, 144, 226, 0.7);
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .controls-info {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 0.75rem;
+            color: #9cdcee;
+        }
+
+        .game-status {
+            font-size: 1.25rem;
+            text-align: center;
+            margin-bottom: 10px;
+            color: #f8c02c; /* Pac-Man Yellow */
+            text-shadow: 1px 1px 2px #000;
+            min-height: 25px; /* Prevent CLS */
+        }
+
+        .score-board {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            max-width: 400px;
+            margin-bottom: 20px;
+            font-size: 1rem;
+        }
+
+        .start-button {
+            padding: 10px 20px;
+            background-color: #4CAF50; /* Green */
+            color: white;
+            border: 3px solid #388E3C;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.15s, transform 0.15s, box-shadow 0.15s;
+            box-shadow: 0 4px #388E3C;
+            font-size: 1rem;
+            letter-spacing: 1px;
+        }
+
+        .start-button:hover {
+            background-color: #5cb85c;
+            box-shadow: 0 2px #388E3C;
+            transform: translateY(2px);
+        }
+        
+        .start-button:active {
+            transform: translateY(4px);
+            box-shadow: none;
+        }
+    </style>
+</head>
+<body class="select-none">
+
+    <div class="score-board">
+        <div id="scoreDisplay">SCORE: 0</div>
+        <div id="statusDisplay" class="game-status">READY!</div>
+    </div>
+
+    <canvas id="gameCanvas" width="400" height="400"></canvas>
+    
+    <div class="controls-info">
+        Use Arrow Keys or W/A/S/D to move.
+    </div>
+
+    <button id="startButton" class="start-button mt-5">START GAME</button>
+
+    <script>
+        // Game Constants
+        const TILE_SIZE = 20;
+        const MAP_WIDTH = 20;
+        const MAP_HEIGHT = 19; 
+        const PACMAN_SPEED = 2; // Speed in tiles per second
+        const GHOST_SPEED = 1.8; // Ghost speed in tiles per second
+        const SNAP_THRESHOLD = 0.5; // Pixel threshold for snapping to tile center
+
+        // Game State
+        let canvas, ctx, gameLoop, lastTime; 
+        let score = 0;
+        let gameStatus = 'READY'; // READY, PLAYING, GAME_OVER, WON
+        let dotCount = 0;
+        
+        // AI Throttling Constant (Ghost pathfinding only runs once every 200ms)
+        const AI_TICK_RATE = 200; 
+
+        // Template map used to reset the game state (19 rows)
+        const TEMPLATE_MAP = [
+            [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+            [0,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,0],
+            [0,1,0,0,1,0,0,0,1,0,0,1,0,0,0,1,0,0,1,0],
+            [0,1,0,0,1,0,0,0,1,0,0,1,0,0,0,1,0,0,1,0],
+            [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0],
+            [0,1,0,0,1,0,1,0,0,0,0,0,0,1,0,1,0,0,1,0],
+            [0,1,1,1,1,0,1,1,1,0,0,1,1,1,0,1,1,1,1,0],
+            [0,0,0,0,1,0,0,0,1,4,4,1,0,0,0,1,0,0,0,0], 
+            [0,0,0,0,1,0,1,1,1,4,4,1,1,1,0,1,0,0,0,0], 
+            [0,1,1,1,1,1,1,0,0,4,4,0,0,1,1,1,1,1,1,0], 
+            [0,1,0,0,1,0,1,1,1,1,1,1,1,1,0,1,0,0,1,0],
+            [0,1,0,0,1,0,1,0,0,0,0,0,0,1,0,1,0,0,1,0],
+            [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0],
+            [0,1,0,0,1,0,0,0,1,0,0,1,0,0,0,1,0,0,1,0],
+            [0,1,0,0,1,0,0,0,1,0,0,1,0,0,0,1,0,0,1,0],
+            [0,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,0],
+            [0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0],
+            [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0],
+            [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+        ];
+
+        // Global map variable, initialized to the template map
+        let map = JSON.parse(JSON.stringify(TEMPLATE_MAP));
+        
+        // Initial positions (x, y are in tile indices)
+        let pacmanStart = { x: 9, y: 9 };
+        let ghostStarts = [
+            { x: 9, y: 7, color: 'rgb(255, 0, 0)', startTile: {x: 9, y: 7} } // Red Ghost (Blinky)
+        ];
+
+        // Entity Classes
+        class Entity {
+            constructor(x, y, speed, color) {
+                this.x = x * TILE_SIZE + TILE_SIZE / 2; // Center X
+                this.y = y * TILE_SIZE + TILE_SIZE / 2; // Center Y
+                this.tileX = x;
+                this.tileY = y;
+                this.speed = speed;
+                this.color = color;
+                this.radius = TILE_SIZE * 0.45;
+                this.currentDir = { x: 0, y: 0 };
+                this.nextTileX = x;
+                this.nextTileY = y;
+            }
+
+            // Converts the pixel position back to the current tile index
+            updateTilePosition() {
+                this.tileX = Math.floor(this.x / TILE_SIZE);
+                this.tileY = Math.floor(this.y / TILE_SIZE);
+            }
+
+            // Checks if a tile is a wall (0)
+            isWall(tileX, tileY) {
+                if (tileX < 0 || tileX >= MAP_WIDTH || tileY < 0 || tileY >= MAP_HEIGHT) {
+                    return true;
+                }
+                // Check map safely
+                return map[tileY] && map[tileY][tileX] === 0;
+            }
+        }
+
+        class Pacman extends Entity {
+            constructor(x, y, speed) {
+                super(x, y, speed, 'yellow');
+                this.angle = 0; // Direction Pacman is facing (0=right, 90=down, 180=left, 270=up)
+                this.mouthOpen = 0.8; // Increased initial open state for visibility.
+                this.mouthDir = 1; // 1 for opening, -1 for closing
+                this.desiredDir = { x: 0, y: 0 }; // Direction input from user
+                this.lives = 3;
+            }
+
+            setDirection(dirX, dirY) {
+                this.desiredDir = { x: dirX, y: dirY };
+                if (dirX === 1) this.angle = 0;
+                else if (dirY === 1) this.angle = 90;
+                else if (dirX === -1) this.angle = 180;
+                else if (dirY === -1) this.angle = 270;
+            }
+
+            update(delta) {
+                this.updateTilePosition();
+                const step = this.speed * TILE_SIZE * delta / 1000; 
+
+                // 1. Mouth Animation
+                this.mouthOpen += this.mouthDir * 0.15;
+                if (this.mouthOpen > 1.2 || this.mouthOpen < 0.3) this.mouthDir *= -1; 
+
+                // 2. Movement
+                const targetX = this.tileX * TILE_SIZE + TILE_SIZE / 2;
+                const targetY = this.tileY * TILE_SIZE + TILE_SIZE / 2;
+                
+                // Check if Pacman is near the center of his current tile using the SNAP_THRESHOLD
+                const atCenter = Math.abs(this.x - targetX) < SNAP_THRESHOLD && Math.abs(this.y - targetY) < SNAP_THRESHOLD;
+
+                if (atCenter) {
+                    
+                    // Snap to center to prevent drift
+                    this.x = targetX;
+                    this.y = targetY;
+
+                    // A. Check if the new desired direction is possible (cornering)
+                    this.nextTileX = this.tileX + this.desiredDir.x;
+                    this.nextTileY = this.tileY + this.desiredDir.y;
+
+                    if (!this.isWall(this.nextTileX, this.nextTileY)) {
+                        // Change direction and start moving
+                        this.currentDir = this.desiredDir;
+                    } else if (this.currentDir.x !== 0 || this.currentDir.y !== 0) {
+                        // B. Try to continue current direction if desired direction is blocked
+                        this.nextTileX = this.tileX + this.currentDir.x;
+                        this.nextTileY = this.tileY + this.currentDir.y;
+
+                        if (this.isWall(this.nextTileX, this.nextTileY)) {
+                            // Stop if current direction is also blocked
+                            this.currentDir = { x: 0, y: 0 };
+                        }
+                    } else {
+                        // C. Completely stopped
+                        this.currentDir = { x: 0, y: 0 };
+                    }
+                }
+                
+                // Apply movement
+                this.x += this.currentDir.x * step;
+                this.y += this.currentDir.y * step;
+
+                // Check for dot collision
+                this.checkCollisions();
+            }
+
+            checkCollisions() {
+                // Only check for collisions if Pacman is actively moving on a new tile
+                if (map[this.tileY] && map[this.tileY][this.tileX] === 1) { 
+                    map[this.tileY][this.tileX] = 4; // Mark as empty space
+                    score += 10;
+                    dotCount--;
+                    if (dotCount === 0) {
+                        gameStatus = 'WON';
+                        document.getElementById('statusDisplay').textContent = 'YOU WON!';
+                        cancelAnimationFrame(gameLoop);
+                        document.getElementById('startButton').textContent = 'Play Again';
+                        document.getElementById('startButton').style.display = 'block';
+                    }
+                }
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                
+                // Calculate the start and end angle for the mouth
+                let startAngle = (this.angle + this.mouthOpen * 30) * Math.PI / 180;
+                let endAngle = (this.angle - this.mouthOpen * 30 + 360) * Math.PI / 180;
+
+                ctx.arc(this.x, this.y, this.radius, startAngle, endAngle, false);
+                ctx.lineTo(this.x, this.y);
+                ctx.closePath(); // Explicitly close the path
+                ctx.fill();
+            }
+        }
+
+        class Ghost extends Entity {
+            constructor(x, y, color) {
+                super(x, y, GHOST_SPEED, color);
+                this.baseColor = color;
+                this.targetTile = { x: pacmanStart.x, y: pacmanStart.y }; 
+                this.mode = 'CHASE'; 
+                this.moveTimer = 0; // Timer to throttle AI updates
+            }
+
+            update(delta) {
+                this.updateTilePosition();
+                const step = this.speed * TILE_SIZE * delta / 1000;
+                
+                this.moveTimer += delta;
+
+                const targetX = this.tileX * TILE_SIZE + TILE_SIZE / 2;
+                const targetY = this.tileY * TILE_SIZE + TILE_SIZE / 2;
+
+                const atCenter = Math.abs(this.x - targetX) < SNAP_THRESHOLD && Math.abs(this.y - targetY) < SNAP_THRESHOLD;
+
+                // If ghost is near center of tile OR the AI throttle has expired, decide next move
+                if (atCenter && this.moveTimer >= AI_TICK_RATE) {
+                    
+                    // Snap to center
+                    this.x = targetX;
+                    this.y = targetY;
+                    this.moveTimer = 0; // Reset timer
+
+                    // 1. Target Pac-Man
+                    this.targetTile = { x: pacman.tileX, y: pacman.tileY };
+                    
+                    const possibleMoves = this.getPossibleMoves();
+                    let bestMove = { dir: { x: 0, y: 0 }, distance: Infinity };
+
+                    // Find move that minimizes distance to target
+                    possibleMoves.forEach(move => {
+                        const newX = this.tileX + move.x;
+                        const newY = this.tileY + move.y;
+                        
+                        const distance = Math.sqrt(
+                            Math.pow(this.targetTile.x - newX, 2) + 
+                            Math.pow(this.targetTile.y - newY, 2)
+                        );
+                        
+                        // Prevent 180-degree turns unless it's the only option
+                        const isReverse = move.x === -this.currentDir.x && move.y === -this.currentDir.y;
+
+                        if (distance < bestMove.distance && !isReverse) {
+                            bestMove = { dir: move, distance: distance };
+                        } else if (possibleMoves.length === 1) { 
+                            // This handles dead ends where reversing is mandatory
+                            bestMove = { dir: move, distance: distance };
+                        }
+                    });
+
+                    // Fallback check (shouldn't be strictly necessary with the above logic, but keeps it safe)
+                    if (bestMove.distance === Infinity && possibleMoves.length > 0) {
+                        bestMove.dir = possibleMoves[0]; 
+                    }
+
+                    this.currentDir = bestMove.dir;
+                }
+                
+                // Apply movement
+                this.x += this.currentDir.x * step;
+                this.y += this.currentDir.y * step;
+            }
+
+            getPossibleMoves() {
+                const moves = [];
+                const directions = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
+                
+                directions.forEach(dir => {
+                    const nextX = this.tileX + dir.x;
+                    const nextY = this.tileY + dir.y;
+                    
+                    if (!this.isWall(nextX, nextY)) {
+                        moves.push(dir);
+                    }
+                });
+                return moves;
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                // Draw a half circle on top, then close the path for the skirt
+                ctx.arc(this.x, this.y, this.radius, Math.PI, 0, false);
+                
+                // Draw the square body below the arc
+                ctx.fillRect(this.x - this.radius, this.y, this.radius * 2, this.radius - 2); 
+                
+                // Draw the scalloped bottom (skirt)
+                const legCount = 4;
+                const legWidth = this.radius * 2 / legCount;
+                const yBottom = this.y + this.radius - 2;
+
+                for (let i = 0; i < legCount; i++) {
+                    const xStart = this.x - this.radius + legWidth * i;
+                    const xMid = xStart + legWidth / 2;
+                    const xEnd = xStart + legWidth;
+
+                    // Draw triangle skirt points for the bottom
+                    ctx.lineTo(xStart, yBottom);
+                    ctx.lineTo(xMid, yBottom + 4);
+                    ctx.lineTo(xEnd, yBottom);
+                }
+
+                ctx.fill();
+
+                // Eyes (white)
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(this.x - this.radius / 3, this.y - this.radius / 4, this.radius / 4, 0, Math.PI * 2);
+                ctx.arc(this.x + this.radius / 3, this.y - this.radius / 4, this.radius / 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Pupils (blue)
+                ctx.fillStyle = 'blue';
+                ctx.beginPath();
+                // Simple fixed pupils for simplicity
+                ctx.arc(this.x - this.radius / 3, this.y - this.radius / 4, this.radius / 8, 0, Math.PI * 2);
+                ctx.arc(this.x + this.radius / 3, this.y - this.radius / 4, this.radius / 8, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        let pacman;
+        let ghosts = [];
+
+        function resetGame() {
+            score = 0;
+            dotCount = 0;
+            gameStatus = 'READY';
+            document.getElementById('statusDisplay').textContent = 'READY!';
+            document.getElementById('startButton').textContent = 'START GAME';
+            document.getElementById('startButton').style.display = 'block';
+
+            // Reset map using a deep copy of the template
+            map = JSON.parse(JSON.stringify(TEMPLATE_MAP));
+
+            // Count dots
+            dotCount = map.flat().filter(cell => cell === 1).length;
+
+            pacman = new Pacman(pacmanStart.x, pacmanStart.y, PACMAN_SPEED);
+            
+            ghosts = [];
+            ghosts.push(new Ghost(ghostStarts[0].x, ghostStarts[0].y, ghostStarts[0].color));
+        }
+
+        function init() {
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+            
+            // Canvas dimensions adjusted by MAP_HEIGHT (19)
+            canvas.width = MAP_WIDTH * TILE_SIZE;
+            canvas.height = MAP_HEIGHT * TILE_SIZE;
+
+            document.getElementById('startButton').addEventListener('click', startGame);
+
+            resetGame();
+            draw(); 
+        }
+
+        function startGame() {
+            if (gameStatus === 'GAME_OVER' || gameStatus === 'WON') {
+                resetGame();
+            }
+            gameStatus = 'PLAYING';
+            document.getElementById('statusDisplay').textContent = 'GO!';
+            document.getElementById('startButton').style.display = 'none';
+
+            lastTime = performance.now();
+            gameLoop = requestAnimationFrame(gameTick);
+        }
+
+        function gameTick(timestamp) {
+            gameLoop = requestAnimationFrame(gameTick);
+
+            const delta = timestamp - lastTime;
+            lastTime = timestamp;
+
+            // Clamp delta time (max 100ms) to prevent massive jumps 
+            const clampedDelta = Math.min(delta, 100); 
+
+            update(clampedDelta);
+            draw();
+            checkGhostCollisions();
+        }
+
+        function update(delta) {
+            if (gameStatus !== 'PLAYING') return;
+
+            // Update entities
+            pacman.update(delta);
+            ghosts.forEach(ghost => ghost.update(delta));
+            
+            document.getElementById('scoreDisplay').textContent = `SCORE: ${score}`;
+        }
+        
+        function checkGhostCollisions() {
+            if (gameStatus !== 'PLAYING') return;
+
+            ghosts.forEach(ghost => {
+                const distance = Math.sqrt(
+                    Math.pow(pacman.x - ghost.x, 2) +
+                    Math.pow(pacman.y - ghost.y, 2)
+                );
+
+                if (distance < pacman.radius + ghost.radius) {
+                    // Collision: Pac-Man gets caught
+                    gameStatus = 'GAME_OVER';
+                    document.getElementById('statusDisplay').textContent = 'GAME OVER!';
+                    cancelAnimationFrame(gameLoop);
+                    document.getElementById('startButton').textContent = 'Try Again';
+                    document.getElementById('startButton').style.display = 'block';
+                }
+            });
+        }
+
+        function draw() {
+            // Clear screen
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Maze, Dots, and Power Pellets
+            for (let y = 0; y < MAP_HEIGHT; y++) {
+                for (let x = 0; x < MAP_WIDTH; x++) {
+                    const cell = map[y][x];
+                    const centerX = x * TILE_SIZE + TILE_SIZE / 2;
+                    const centerY = y * TILE_SIZE + TILE_SIZE / 2;
+
+                    if (cell === 0) { // Wall
+                        ctx.fillStyle = '#4a90e2'; // Blue
+                        ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                    } else if (cell === 1) { // Dot
+                        ctx.fillStyle = '#fff';
+                        ctx.beginPath();
+                        ctx.arc(centerX, centerY, TILE_SIZE * 0.15, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    // Empty space (4) is drawn as black, which is the default background
+                }
+            }
+
+            // Draw entities
+            pacman.draw();
+            ghosts.forEach(ghost => ghost.draw());
+            
+            // Draw Game Over/Won text if not playing
+            if (gameStatus === 'GAME_OVER') {
+                 drawText('GAME OVER', 'red');
+            } else if (gameStatus === 'WON') {
+                 drawText('YOU WON!', 'lime');
+            }
+        }
+
+        function drawText(text, color) {
+            ctx.fillStyle = color;
+            ctx.font = '30px "Press Start 2P"';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+        }
+
+
+        // --- Input Handling ---
+        document.addEventListener('keydown', (e) => {
+            let dirX = 0;
+            let dirY = 0;
+
+            switch (e.key) {
+                case 'ArrowUp':
+                case 'w':
+                case 'W':
+                    dirY = -1;
+                    break;
+                case 'ArrowDown':
+                case 's':
+                case 'S':
+                    dirY = 1;
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                case 'A':
+                    dirX = -1;
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                case 'D':
+                    dirX = 1;
+                    break;
+                default:
+                    return; // Ignore other keys
+            }
+            // Prevent default behavior (like scrolling with arrow keys)
+            e.preventDefault(); 
+            
+            if (dirX !== 0 || dirY !== 0) {
+                pacman.setDirection(dirX, dirY);
+            }
+        });
+
+        // Initialize the game when the window loads
+        window.onload = init;
+    </script>
+</body>
+</html>
