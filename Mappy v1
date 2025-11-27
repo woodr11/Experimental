@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mappy Arcade Clone</title>
+    <!-- Load Tailwind CSS for modern styling of the surrounding elements -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for the arcade aesthetic and responsive canvas */
+        body, html {
+            height: 100%;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #1a202c; /* Dark background */
+            font-family: 'Inter', sans-serif;
+        }
+
+        #game-container {
+            background-color: #333;
+            box-shadow: 0 0 40px rgba(0, 255, 255, 0.5), 0 0 10px rgba(0, 255, 255, 0.8) inset;
+            border: 8px solid #00f;
+            border-radius: 12px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            max-width: 90vw;
+            max-height: 90vh;
+            aspect-ratio: 4 / 3; /* Standard arcade aspect ratio */
+            position: relative; /* Needed for the overlay */
+        }
+
+        canvas {
+            background-color: #000033; /* Dark blue game background */
+            border: 2px solid #00ffff;
+            border-radius: 4px;
+            display: block;
+            width: 100%;
+            height: auto;
+            flex-grow: 1;
+        }
+
+        /* Styling for the control panel */
+        .controls {
+            padding: 10px;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: #fff;
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+
+        /* Styling for the Start/Game Over Overlay */
+        #start-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            border-radius: 12px;
+        }
+        
+        /* Utility to ensure the overlay is correctly hidden */
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container" class="transition duration-500">
+        
+        <h1 class="text-3xl font-extrabold tracking-tight text-white mb-2 pt-2">
+            Mappy Clone
+        </h1>
+
+        <div class="controls">
+            <div id="score-display">SCORE: 0000</div>
+            <div id="lives-display" class="text-red-500">LIVES: 3</div>
+            <div id="status-display" class="text-yellow-400">Press START!</div>
+        </div>
+
+        <canvas id="mappyCanvas"></canvas>
+
+        <!-- Start/Game Over Overlay -->
+        <div id="start-overlay">
+            <h2 id="overlay-title" class="text-5xl font-extrabold text-white mb-8 text-shadow-lg">
+                MAPPY ARCADE
+            </h2>
+            <button id="start-button" 
+                    class="bg-green-500 hover:bg-green-400 text-white text-2xl font-bold py-4 px-10 rounded-xl shadow-2xl transition transform hover:scale-105 active:scale-95 border-b-4 border-green-700">
+                START GAME
+            </button>
+            <p id="overlay-message" class="mt-4 text-gray-300 text-sm">
+                Controls: &larr; Left, &rarr; Right
+            </p>
+            <p class="mt-2 text-yellow-300 text-base font-bold">
+                Vertical movement is via the bottom trampolines only!
+            </p>
+        </div>
+
+        <div class="mt-2 text-sm text-gray-400">
+            Controls: &larr; Left, &rarr; Right
+        </div>
+    </div>
+
+    <script>
+        // Game Constants and Initialization
+        const canvas = document.getElementById('mappyCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score-display');
+        const livesDisplay = document.getElementById('lives-display');
+        const statusDisplay = document.getElementById('status-display');
+        const startOverlay = document.getElementById('start-overlay');
+        const startButton = document.getElementById('start-button');
+        const overlayTitle = document.getElementById('overlay-title');
+
+        // Game Settings
+        const PLAYER_SIZE = 20;
+        const PLAYER_SPEED = 4;
+        const GRAVITY = 0.5;
+        const TERMINAL_VELOCITY = 10;
+        const PLATFORM_HEIGHT = 10;
+        const ENEMY_SIZE = 20;
+        const ENEMY_SPEED = 1.5;
+        const TRAMPOLINE_BOUNCE_HEIGHT = -18; // High upward velocity for bounce
+
+        // Game State
+        let player = {
+            x: 50,
+            y: 0,
+            vx: 0,
+            vy: 0,
+            onGround: false,
+            w: PLAYER_SIZE,
+            h: PLAYER_SIZE 
+        };
+
+        let score = 0;
+        let lives = 3;
+        let keys = {};
+        let gameState = 'READY'; // Added game state
+
+        // Initial position constants
+        const platformWidth = 240;
+        const gapWidth = 40;
+        const floorY = [350, 270, 190, 110]; // Y-coordinates for the 4 floors
+
+        // --- PLATFORMS: Three Symmetrical Columns (No gaps on upper floors) ---
+        const platforms = [
+            // Level 1 (Y=350) - Only the center platform remains (sides replaced by trampolines)
+            { x: platformWidth + gapWidth, y: floorY[0], w: platformWidth, color: 'rgb(200, 50, 50)' }, 
+            
+            // Level 2 (Y=270)
+            { x: 0, y: floorY[1], w: platformWidth, color: 'rgb(50, 200, 50)' },
+            { x: platformWidth + gapWidth, y: floorY[1], w: platformWidth, color: 'rgb(50, 200, 50)' },
+            { x: 2 * (platformWidth + gapWidth), y: floorY[1], w: platformWidth, color: 'rgb(50, 200, 50)' },
+
+            // Level 3 (Y=190)
+            { x: 0, y: floorY[2], w: platformWidth, color: 'rgb(200, 100, 200)' },
+            { x: platformWidth + gapWidth, y: floorY[2], w: platformWidth, color: 'rgb(200, 100, 200)' },
+            { x: 2 * (platformWidth + gapWidth), y: floorY[2], w: platformWidth, color: 'rgb(200, 100, 200)' },
+
+            // Level 4 (Top, Y=110)
+            { x: 0, y: floorY[3], w: platformWidth, color: 'rgb(50, 50, 200)' },
+            { x: platformWidth + gapWidth, y: floorY[3], w: platformWidth, color: 'rgb(50, 50, 200)' },
+            { x: 2 * (platformWidth + gapWidth), y: floorY[3], w: platformWidth, color: 'rgb(50, 50, 200)' },
+        ];
+        
+        // Calculated initial Y position to sit on the bottom-most platform (y=350) - using the first defined platform
+        const initialPlayerX = platforms[0].x + platforms[0].w / 2 - PLAYER_SIZE / 2;
+        const initialPlayerY = platforms[0].y - PLAYER_SIZE; 
+        
+        // Trampolines (ONLY on the bottom floor to replace side platforms and enforce vertical movement)
+        const trampWidth = platformWidth + gapWidth; // Wide enough to cover the side area
+        const trampolines = [
+            // Bottom Left Trampoline (covers x=0 to x=platformWidth+gapWidth)
+            { x: 0, y: floorY[0], w: platformWidth + gapWidth - 1, h: 5, color: '#ff4500' }, 
+            // Bottom Right Trampoline (covers x=2*platformWidth + gapWidth to end)
+            { x: 2 * platformWidth + gapWidth, y: floorY[0], w: platformWidth + gapWidth, h: 5, color: '#ff4500' }, 
+        ];
+        
+        // Items (score dots) - positioned 10px above the platform top
+        let items = [
+            // L1 (Center platform)
+            { x: 400, y: floorY[0] - 10, collected: false }, 
+            // L2
+            { x: 100, y: floorY[1] - 10, collected: false }, 
+            { x: 400, y: floorY[1] - 10, collected: false }, 
+            { x: 680, y: floorY[1] - 10, collected: false }, 
+            // L3
+            { x: 100, y: floorY[2] - 10, collected: false }, 
+            { x: 400, y: floorY[2] - 10, collected: false }, 
+            { x: 680, y: floorY[2] - 10, collected: false }, 
+            // L4
+            { x: 100, y: floorY[3] - 10, collected: false }, 
+            { x: 400, y: floorY[3] - 10, collected: false }, 
+            { x: 680, y: floorY[3] - 10, collected: false }, 
+        ];
+
+        // Doors (Bonus triggers) - aligned with platform segments
+        const doors = [
+            { x: 200, y: floorY[1] - 20, w: 30, h: 20, open: false, color: '#8b4513' }, // L2 Left
+            { x: 700, y: floorY[2] - 20, w: 30, h: 20, open: false, color: '#8b4513' }, // L3 Right
+            { x: 340, y: floorY[3] - 20, w: 30, h: 20, open: false, color: '#8b4513' }, // L4 Center
+            { x: 20, y: floorY[3] - 20, w: 30, h: 20, open: false, color: '#8b4513' }  // L4 Top Left
+        ];
+
+        // Enemies (Goro and Nyamco stand-ins) - start them on L4
+        let enemies = [
+            // Nyamco (Green) - Start on L4 left segment (index 7 in platforms array)
+            { x: platforms[7].x + 50, y: 0, vx: -ENEMY_SPEED, vy: 0, w: ENEMY_SIZE, h: ENEMY_SIZE, color: '#00cc00', startPlatformIndex: 7 }, 
+            // Goro (Orange/Red) - Start on L4 right segment (index 9 in platforms array)
+            { x: platforms[9].x + platforms[9].w - 50 - ENEMY_SIZE, y: 0, vx: ENEMY_SPEED, vy: 0, w: ENEMY_SIZE, h: ENEMY_SIZE, color: '#ff7f50', startPlatformIndex: 9 }  
+        ];
+
+        // --- Core Game Functions ---
+
+        function resizeCanvas() {
+            canvas.width = 800;
+            canvas.height = 400;
+        }
+
+        function isColliding(a, b) {
+            // Simple AABB collision check
+            return a.x < b.x + b.w &&
+                   a.x + a.w > b.x &&
+                   a.y < b.y + b.h &&
+                   a.y + a.h > b.y;
+        }
+        
+        // Function to initialize or reset the entire game
+        function initializeGame() {
+            score = 0;
+            lives = 3;
+            scoreDisplay.textContent = 'SCORE: 0000';
+            livesDisplay.textContent = `LIVES: ${lives}`;
+            
+            // Reset player
+            resetPlayer(); 
+            
+            // Reset enemies to starting positions 
+            enemies[0].y = platforms[enemies[0].startPlatformIndex].y - enemies[0].h;
+            enemies[1].y = platforms[enemies[1].startPlatformIndex].y - enemies[1].h;
+            enemies[0].x = platforms[enemies[0].startPlatformIndex].x + 50;
+            enemies[1].x = platforms[enemies[1].startPlatformIndex].x + platforms[enemies[1].startPlatformIndex].w - 50 - ENEMY_SIZE;
+            enemies[0].vx = -ENEMY_SPEED; // Reset direction
+            enemies[1].vx = ENEMY_SPEED;
+            
+            // Reset collectibles
+            items = [
+                // L1 (Center platform)
+                { x: 400, y: floorY[0] - 10, collected: false }, 
+                // L2
+                { x: 100, y: floorY[1] - 10, collected: false }, 
+                { x: 400, y: floorY[1] - 10, collected: false }, 
+                { x: 680, y: floorY[1] - 10, collected: false }, 
+                // L3
+                { x: 100, y: floorY[2] - 10, collected: false }, 
+                { x: 400, y: floorY[2] - 10, collected: false }, 
+                { x: 680, y: floorY[2] - 10, collected: false }, 
+                // L4
+                { x: 100, y: floorY[3] - 10, collected: false }, 
+                { x: 400, y: floorY[3] - 10, collected: false }, 
+                { x: 680, y: floorY[3] - 10, collected: false }, 
+            ];
+            doors.forEach(door => door.open = false);
+        }
+
+        function startGame() {
+            if (gameState === 'PLAYING') return;
+            
+            initializeGame();
+            gameState = 'PLAYING';
+            // Fix: Ensure the overlay is correctly hidden
+            startOverlay.classList.add('hidden');
+            startOverlay.style.display = 'none'; 
+            statusDisplay.textContent = "Ready to go!";
+        }
+
+        function resetPlayer() {
+            player.x = initialPlayerX;
+            player.y = initialPlayerY;
+            player.vx = 0;
+            player.vy = 0;
+            // Only update status if it's not the initial state
+            if (gameState === 'PLAYING') {
+                statusDisplay.textContent = `Caught! Lives left: ${lives}`;
+                livesDisplay.textContent = `LIVES: ${lives}`;
+            }
+        }
+        
+        function checkEnemyCollision() {
+            if (lives <= 0) return;
+
+            enemies.forEach(enemy => {
+                if (isColliding(player, enemy)) {
+                    lives--;
+                    if (lives <= 0) {
+                        statusDisplay.textContent = "GAME OVER! Press RETRY to play again.";
+                        overlayTitle.textContent = "GAME OVER";
+                        startButton.textContent = "RETRY";
+                        startOverlay.classList.remove('hidden');
+                        startOverlay.style.display = 'flex'; // Show overlay
+                        gameState = 'GAME_OVER';
+                    } else {
+                        resetPlayer();
+                    }
+                }
+            });
+        }
+
+        function checkDoorInteraction() {
+            doors.forEach(door => {
+                // Door collision is based on hitting the door rectangle itself
+                if (!door.open && isColliding(player, door)) {
+                     // Door bonus triggers if player is on a high bounce (high negative VY)
+                    if (player.vy < TRAMPOLINE_BOUNCE_HEIGHT / 2) { 
+                        door.open = true;
+                        const bonusPoints = 2000; 
+                        score += bonusPoints;
+                        
+                        // Collect all remaining items for a bonus 
+                        let itemsCollected = 0;
+                        items.forEach(item => {
+                            if (!item.collected) {
+                                item.collected = true;
+                                score += 500;
+                                itemsCollected++;
+                            }
+                        });
+                        statusDisplay.textContent = `DOOR BONUS! +${bonusPoints} and ${itemsCollected} items!`;
+                        
+                        // Update score display immediately
+                        scoreDisplay.textContent = `SCORE: ${String(score).padStart(4, '0')}`;
+                    }
+                }
+            });
+        }
+
+        function checkPlatformCollision() {
+            let nextY = player.y + player.vy;
+            let landed = false;
+            
+            // --- 1. Check Upward Collision (Head hitting underside of platform) ---
+            if (player.vy < 0) {
+                for (const p of platforms) {
+                    // Check if player's head (nextY) is going past the platform's bottom (p.y + PLATFORM_HEIGHT)
+                    if (
+                        player.x + PLAYER_SIZE > p.x &&
+                        player.x < p.x + p.w &&
+                        nextY < p.y + PLATFORM_HEIGHT &&
+                        player.y >= p.y + PLATFORM_HEIGHT // Was previously below the platform bottom
+                    ) {
+                        // Collision with underside! Stop upward movement.
+                        player.y = p.y + PLATFORM_HEIGHT;
+                        player.vy = 0;
+                        // Important: Do not return yet, still need to process falling/trampoline logic below
+                    }
+                }
+            }
+
+
+            // --- 2. Check Trampolines (only if the player is falling or level with the tramp top) ---
+            if (player.vy >= 0) {
+                for (const t of trampolines) {
+                    // Check collision logic specific to trampoline surface
+                    if (
+                        player.x + PLAYER_SIZE > t.x &&
+                        player.x < t.x + t.w &&
+                        player.y + PLAYER_SIZE <= t.y &&
+                        nextY + PLAYER_SIZE >= t.y
+                    ) {
+                        // Bounce!
+                        player.y = t.y - PLAYER_SIZE;
+                        player.vy = TRAMPOLINE_BOUNCE_HEIGHT;
+                        statusDisplay.textContent = "BOUNCE!";
+                        return; // Bounce overrides normal platform landing
+                    }
+                }
+            }
+            
+            // --- 3. Check Platforms (if no trampoline bounce occurred) ---
+            for (const p of platforms) {
+                if (
+                    player.x + PLAYER_SIZE > p.x &&
+                    player.x < p.x + p.w &&
+                    player.y + PLAYER_SIZE <= p.y &&
+                    nextY + PLAYER_SIZE >= p.y
+                ) {
+                    // Land on platform
+                    player.y = p.y - PLAYER_SIZE;
+                    player.vy = 0;
+                    landed = true;
+                    break;
+                }
+            }
+            
+            // Set onGround based on landing status
+            player.onGround = landed;
+        }
+
+        function updateEnemies() {
+            enemies.forEach(enemy => {
+                if (lives <= 0) return;
+
+                // 1. Apply Gravity and find platform collision
+                enemy.vy += GRAVITY;
+                if (enemy.vy > TERMINAL_VELOCITY) enemy.vy = TERMINAL_VELOCITY;
+                
+                let nextY = enemy.y + enemy.vy;
+                let enemyOnGround = false;
+                let currentPlatform = null;
+
+                // Check for platform collision
+                for (const p of platforms) {
+                    if (
+                        enemy.x + enemy.w > p.x &&
+                        enemy.x < p.x + p.w &&
+                        enemy.y + enemy.h <= p.y &&
+                        nextY + enemy.h >= p.y
+                    ) {
+                        enemy.y = p.y - enemy.h;
+                        enemy.vy = 0;
+                        enemyOnGround = true;
+                        currentPlatform = p;
+                        break;
+                    }
+                }
+                
+                enemy.y += enemy.vy;
+                
+                // 2. Horizontal Movement and Edge Detection
+                if (enemyOnGround) {
+                    let nextX = enemy.x + enemy.vx;
+                    let shouldTurn = false;
+
+                    if (currentPlatform) {
+                         // Check if next step will lead off the edge of the current platform 
+                         if (nextX < currentPlatform.x || nextX + enemy.w > currentPlatform.x + currentPlatform.w) {
+                             shouldTurn = true;
+                         }
+                    } 
+                    
+                    if (shouldTurn) {
+                        enemy.vx *= -1; // Reverse direction
+                    }
+                    enemy.x += enemy.vx;
+                }
+                
+                // Reset enemy if they fall off the bottom of the screen (e.g. they fall off the edge of L1's center platform)
+                if (enemy.y > canvas.height) {
+                    // Reset to a position on the top platform
+                    const topPlatform = platforms[7]; // L4 left segment
+                    enemy.y = topPlatform.y - enemy.h;
+                    enemy.x = topPlatform.x + Math.random() * (topPlatform.w - enemy.w);
+                    enemy.vy = 0;
+                    enemy.vx = ENEMY_SPEED * (Math.random() < 0.5 ? 1 : -1);
+                }
+            });
+        }
+
+
+        function update() {
+            if (gameState !== 'PLAYING') return;
+
+            // --- Horizontal Movement (Player) ---
+            player.vx = 0;
+            if (keys['ArrowLeft']) {
+                player.vx = -PLAYER_SPEED;
+            }
+            if (keys['ArrowRight']) {
+                player.vx = PLAYER_SPEED;
+            }
+            
+            player.x += player.vx;
+
+            // Keep player within horizontal bounds
+            if (player.x < 0) player.x = 0;
+            if (player.x + PLAYER_SIZE > canvas.width) player.x = canvas.width - PLAYER_SIZE;
+
+            // --- Apply Gravity & Check Collisions ---
+            player.vy += GRAVITY;
+            if (player.vy > TERMINAL_VELOCITY) player.vy = TERMINAL_VELOCITY;
+            
+            checkPlatformCollision();
+            
+            player.y += player.vy;
+
+            // Simple boundary check for falling off the bottom
+            if (player.y > canvas.height) {
+                lives--;
+                if (lives <= 0) {
+                     statusDisplay.textContent = "GAME OVER! Press RETRY to play again.";
+                     overlayTitle.textContent = "GAME OVER";
+                     startButton.textContent = "RETRY";
+                     startOverlay.classList.remove('hidden');
+                     startOverlay.style.display = 'flex';
+                     gameState = 'GAME_OVER';
+                } else {
+                    resetPlayer();
+                }
+            }
+            
+            // Check item collection (regular items)
+            items.forEach(item => {
+                // Check collision (10x10 dot)
+                if (!item.collected && isColliding(player, { x: item.x, y: item.y, w: 10, h: 10 })) {
+                    item.collected = true;
+                    score += 100;
+                    scoreDisplay.textContent = `SCORE: ${String(score).padStart(4, '0')}`;
+                    statusDisplay.textContent = "Item Collected! +100";
+                    
+                    // Check for level clear condition
+                    if (items.every(i => i.collected)) {
+                        statusDisplay.textContent = "LEVEL COMPLETE! (Requires restart)";
+                        // A full game would load the next level here
+                    }
+                }
+            });
+            
+            // --- Enemies and Door Logic ---
+            updateEnemies();
+            checkEnemyCollision();
+            checkDoorInteraction();
+        }
+
+        function draw() {
+            // Clear canvas for the next frame
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Platforms
+            platforms.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.w, PLATFORM_HEIGHT);
+            });
+
+            // Draw Doors
+            doors.forEach(door => {
+                ctx.fillStyle = door.color;
+                ctx.fillRect(door.x, door.y, door.w, door.h);
+                ctx.fillStyle = '#ffff00';
+                ctx.beginPath();
+                ctx.arc(door.x + door.w - 5, door.y + door.h / 2, 2, 0, Math.PI * 2);
+                ctx.fill();
+
+                if (door.open) {
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                    ctx.fillRect(door.x, door.y, door.w, door.h);
+                    ctx.strokeStyle = '#00ff00';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(door.x, door.y, door.w, door.h);
+                }
+            });
+            
+            // Draw Trampolines
+            trampolines.forEach(t => {
+                ctx.fillStyle = t.color;
+                ctx.fillRect(t.x, t.y, t.w, t.h);
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'center';
+                ctx.font = '8px Arial';
+                ctx.fillText('Bounce Pad', t.x + t.w / 2, t.y + 4);
+            });
+            
+            // Restore default font for other text
+            ctx.font = '12px Arial';
+
+            // Draw Items (as 10x10 circles)
+            items.forEach(item => {
+                if (!item.collected) {
+                    ctx.fillStyle = '#ff69b4'; // Pink
+                    ctx.beginPath();
+                    ctx.arc(item.x + 5, item.y + 5, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            });
+
+            // Draw Player (Mappy)
+            ctx.fillStyle = '#ff0000'; // Mappy is red
+            ctx.fillRect(player.x, player.y, PLAYER_SIZE, PLAYER_SIZE);
+            
+            // Simple visual indicator for the player
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(player.x + PLAYER_SIZE / 2, player.y + PLAYER_SIZE / 2, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw Enemies
+            enemies.forEach(enemy => {
+                ctx.fillStyle = enemy.color;
+                ctx.beginPath();
+                ctx.arc(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, enemy.w / 2, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Draw eyes
+                ctx.fillStyle = '#000';
+                const eyeOffset = enemy.vx > 0 ? 5 : -5;
+                ctx.beginPath();
+                ctx.arc(enemy.x + enemy.w / 2 + eyeOffset, enemy.y + enemy.h / 2 - 3, 2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        let lastTime = 0;
+        const FPS = 60;
+        const frameDuration = 1000 / FPS;
+
+        function gameLoop(timestamp) {
+            if (gameState === 'PLAYING') { // Only update if playing
+                 if (timestamp - lastTime >= frameDuration) {
+                    update();
+                    draw();
+                    lastTime = timestamp;
+                }
+            } else {
+                draw(); // Keep drawing the paused game state
+            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- Event Listeners ---
+
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            // Prevent scrolling when using arrow keys
+            if (['ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                e.preventDefault();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+        
+        startButton.addEventListener('click', startGame);
+
+        // Initial setup and start
+        window.onload = function () {
+            resizeCanvas();
+            // Start the game loop immediately, but it won't call update until gameState is 'PLAYING'
+            gameLoop(); 
+            // Set up initial positions for display before starting
+            initializeGame();
+            statusDisplay.textContent = "Press START to begin!";
+            startOverlay.style.display = 'flex'; // Ensure overlay is visible on load
+            startOverlay.classList.remove('hidden');
+            console.log("Mappy game loaded. Waiting for start.");
+        };
+
+        window.addEventListener('resize', resizeCanvas);
+
+    </script>
+</body>
+</html>
